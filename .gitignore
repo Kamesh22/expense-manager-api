@@ -1,0 +1,44 @@
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Maven
+target/
+.mvn/wrapper/maven-wrapper.jar
+.mvn/wrapper/maven-wrapper.properties
+
+# Gradle
+build/
+.gradle/
+
+# Spring Boot
+application-local.properties
+application-local.yml
+
+# Database
+*.db
+*.h2.db
+
+# Logs
+logs/
+*.log
+
+# System
+Thumbs.db
+.classpath
+.project
+.settings/
+bin/
+
+# Node (if needed for frontend)
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Environment
+.env
+.env.local
