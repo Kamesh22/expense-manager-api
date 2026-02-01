@@ -58,5 +58,41 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
     @Query("SELECT CAST(e.category AS string), SUM(e.amount) FROM Expense e WHERE e.user.id = :userId AND e.isDeleted = false GROUP BY e.category")
     List<Object[]> getCategoryTotals(@Param("userId") Long userId);
 
+    /**
+     * Get monthly expense totals using JPQL aggregation with date grouping.
+     * Automatically excludes deleted expenses.
+     * Groups by YYYY-MM format.
+     *
+     * @param userId the user ID
+     * @return list of Object[] with [YYYY-MM string, total amount]
+     */
+    @Query("SELECT CONCAT(CAST(YEAR(e.expenseDate) AS string), '-', " +
+           "LPAD(CAST(MONTH(e.expenseDate) AS string), 2, '0')), SUM(e.amount) " +
+           "FROM Expense e WHERE e.user.id = :userId AND e.isDeleted = false " +
+           "GROUP BY YEAR(e.expenseDate), MONTH(e.expenseDate) " +
+           "ORDER BY YEAR(e.expenseDate) DESC, MONTH(e.expenseDate) DESC")
+    List<Object[]> getMonthlySummary(@Param("userId") Long userId);
+
+    /**
+     * Get monthly expense totals within a date range.
+     * Automatically excludes deleted expenses.
+     *
+     * @param userId the user ID
+     * @param startDate the start date (inclusive)
+     * @param endDate the end date (inclusive)
+     * @return list of Object[] with [YYYY-MM string, total amount]
+     */
+    @Query("SELECT CONCAT(CAST(YEAR(e.expenseDate) AS string), '-', " +
+           "LPAD(CAST(MONTH(e.expenseDate) AS string), 2, '0')), SUM(e.amount) " +
+           "FROM Expense e WHERE e.user.id = :userId AND e.isDeleted = false " +
+           "AND e.expenseDate >= :startDate AND e.expenseDate <= :endDate " +
+           "GROUP BY YEAR(e.expenseDate), MONTH(e.expenseDate) " +
+           "ORDER BY YEAR(e.expenseDate) DESC, MONTH(e.expenseDate) DESC")
+    List<Object[]> getMonthlySummaryByDateRange(
+        @Param("userId") Long userId,
+        @Param("startDate") LocalDate startDate,
+        @Param("endDate") LocalDate endDate
+    );
+
 }
 

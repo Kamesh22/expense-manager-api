@@ -162,6 +162,8 @@ deleted_at (LocalDateTime) - Timestamp when soft-deleted (null if not deleted)
 
 ### Analytics Endpoints
 - `GET /api/v1/analytics/category-summary` - Get expense summary by category (Requires JWT authentication)
+- `GET /api/v1/analytics/monthly-summary` - Get monthly expense totals (Requires JWT authentication)
+  - Optional filters: `?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD`
 
 ## Configuration
 
@@ -288,6 +290,27 @@ All expense deletions are **soft deletes**:
 - Deleted expenses are automatically excluded from all queries
 - Full audit trail is maintained for compliance
 - Analytics automatically exclude deleted records
+
+**Implementation Details:**
+- `isDeleted` boolean field (default: false)
+- `deletedAt` timestamp field (set when expense is deleted)
+- All repository queries filter out deleted records via WHERE clause
+- No physical deletion ever occurs
+- Soft-deleted data remains in database for audit and legal purposes
+
+**Example - Delete Lifecycle:**
+```
+Before Delete:
+  id=5, amount=100.00, isDeleted=false, deletedAt=null
+
+After DELETE /api/v1/expenses/5:
+  id=5, amount=100.00, isDeleted=true, deletedAt=2025-12-28T10:35:20
+
+Result:
+  - GET /api/v1/expenses/5 returns 403 Forbidden (invisible to user)
+  - Analytics exclude from calculations
+  - Record preserved in database for compliance
+```
 
 ### Other Security Features
 
@@ -488,6 +511,44 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
 
 **Note**: Results automatically scoped to authenticated user only.
+
+### Get Monthly Expense Summary
+
+**Request (All months):**
+```
+GET /api/v1/analytics/monthly-summary
+Authorization: Bearer <jwt_token>
+```
+
+**Response (200 OK):**
+```json
+{
+  "2025-10": 1250.75,
+  "2025-11": 980.50,
+  "2025-12": 1430.00
+}
+```
+
+**Request (With date range filter):**
+```
+GET /api/v1/analytics/monthly-summary?startDate=2025-10-01&endDate=2025-12-31
+Authorization: Bearer <jwt_token>
+```
+
+**Response (200 OK):**
+```json
+{
+  "2025-10": 1250.75,
+  "2025-11": 980.50,
+  "2025-12": 1430.00
+}
+```
+
+**Note**: 
+- Monthly summary excludes soft-deleted expenses automatically
+- Date range is inclusive (both start and end dates included)
+- Months are formatted as YYYY-MM and sorted in descending order
+- Results scoped to authenticated user only
 
 ### Get Category Summary
 **Request:**

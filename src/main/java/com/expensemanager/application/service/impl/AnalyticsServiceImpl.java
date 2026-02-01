@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -58,6 +59,45 @@ public class AnalyticsServiceImpl implements AnalyticsService {
             .categoryTotals(categoryTotals)
             .grandTotal(grandTotal)
             .build();
+    }
+
+    @Override
+    public Map<String, BigDecimal> getMonthlySummary(Long userId) {
+        log.debug("Generating monthly summary for user: {}", userId);
+
+        List<Object[]> results = expenseRepository.getMonthlySummary(userId);
+        Map<String, BigDecimal> monthlySummary = new HashMap<>();
+
+        for (Object[] result : results) {
+            String yearMonth = (String) result[0];
+            BigDecimal total = (BigDecimal) result[1];
+            monthlySummary.put(yearMonth, total);
+        }
+
+        log.debug("Monthly summary generated with {} months of data", monthlySummary.size());
+        return monthlySummary;
+    }
+
+    @Override
+    public Map<String, BigDecimal> getMonthlySummaryByDateRange(Long userId, LocalDate startDate, LocalDate endDate) {
+        log.debug("Generating monthly summary for user: {} between {} and {}", userId, startDate, endDate);
+
+        if (startDate.isAfter(endDate)) {
+            log.warn("Invalid date range: startDate {} is after endDate {}", startDate, endDate);
+            throw new IllegalArgumentException("Start date must be before or equal to end date");
+        }
+
+        List<Object[]> results = expenseRepository.getMonthlySummaryByDateRange(userId, startDate, endDate);
+        Map<String, BigDecimal> monthlySummary = new HashMap<>();
+
+        for (Object[] result : results) {
+            String yearMonth = (String) result[0];
+            BigDecimal total = (BigDecimal) result[1];
+            monthlySummary.put(yearMonth, total);
+        }
+
+        log.debug("Monthly summary generated with {} months of data in the specified range", monthlySummary.size());
+        return monthlySummary;
     }
 
 }
