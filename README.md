@@ -145,11 +145,10 @@ deleted_at (LocalDateTime) - Timestamp when soft-deleted (null if not deleted)
 - `POST /api/v1/auth/login` - Login user and get JWT token
 
 ### User Management Endpoints
-- `GET /api/v1/users` - Get all users with pagination
-- `GET /api/v1/users/{id}` - Get user by ID
-- `POST /api/v1/users` - Create new user
-- `PUT /api/v1/users/{id}` - Update user information
-- `DELETE /api/v1/users/{id}` - Delete user
+- `GET /api/v1/admin/users` - Get all users with pagination
+- `GET /api/v1/admin/users/{id}` - Get user by ID
+- `PATCH /api/v1/admin/users/{id}/role` - Change user role
+- `PATCH /api/v1/admin/users/{id}/status` - Activate/deactivate user
 
 ### Expense Management Endpoints
 - `GET /api/v1/expenses` - Get all expenses for a user (with pagination)
@@ -321,7 +320,163 @@ All endpoints are now protected with role-based authorization using Spring Secur
 - ✅ All USER permissions
 - ❌ User account creation limited to registration endpoints
 
-#### Authentication Flow:
+#### ADMIN Bootstrap (System Initialization)
+
+When the application starts, it automatically creates a **default ADMIN user** if no ADMIN users exist. This bootstrap process is:
+- **Idempotent**: Runs only once; subsequent startups skip creation
+- **Automatic**: No manual intervention required
+- **One-time setup**: Ensures system can be initially administered
+
+**Default ADMIN Credentials:**
+```
+Username: admin
+Email: admin@expensemanager.local
+Password: AdminSecure123!
+```
+
+⚠️ **SECURITY ALERT**: Change the default ADMIN password immediately after first login:
+
+```bash
+# 1. Login with default ADMIN credentials
+curl -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"AdminSecure123!"}'
+
+# 2. Response includes JWT token with ADMIN role
+# {
+#   "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+#   "role": "ADMIN",
+#   "expiresIn": 86400000
+# }
+```
+
+#### ADMIN User Management API
+
+**All admin APIs require @PreAuthorize("hasRole('ADMIN')")**
+
+##### Get All Users (Paginated)
+```
+GET /api/v1/admin/users?page=0&size=10
+Authorization: Bearer <admin_jwt_token>
+```
+
+**Response (200 OK):**
+```json
+{
+  "content": [
+    {
+      "id": 1,
+      "username": "admin",
+      "email": "admin@expensemanager.local",
+      "role": "ADMIN",
+      "isActive": true,
+      "createdAt": "2025-12-28T10:00:00"
+    },
+    {
+      "id": 2,
+      "username": "john_doe",
+      "email": "john@example.com",
+      "role": "USER",
+      "isActive": true,
+      "createdAt": "2025-12-28T10:05:00"
+    }
+  ],
+  "pageable": { ... },
+  "totalElements": 2,
+  "totalPages": 1
+}
+```
+
+##### Get User by ID
+```
+GET /api/v1/admin/users/{userId}
+Authorization: Bearer <admin_jwt_token>
+```
+
+##### Change User Role
+```
+PATCH /api/v1/admin/users/{userId}/role
+Authorization: Bearer <admin_jwt_token>
+Content-Type: application/json
+
+{
+  "role": "VIEWER"
+}
+```
+
+**Valid Roles:** ADMIN, USER, VIEWER
+
+**Security Features:**
+- ADMIN cannot demote themselves to USER or VIEWER
+- Role change takes effect immediately
+- Returns 400 Bad Request if attempting invalid role change
+
+**Example: ADMIN attempts self-demotion (fails)**
+```bash
+curl -X PATCH http://localhost:8080/api/v1/admin/users/1/role \
+  -H "Authorization: Bearer <admin_jwt_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"role":"USER"}'
+
+# Response: 400 Bad Request
+# {
+#   "message": "ADMIN users cannot demote themselves to a lower role"
+# }
+```
+
+##### Change User Status (Activate/Deactivate)
+```
+PATCH /api/v1/admin/users/{userId}/status
+Authorization: Bearer <admin_jwt_token>
+Content-Type: application/json
+
+{
+  "isActive": false
+}
+```
+
+**Security Features:**
+- ADMIN cannot deactivate themselves
+- Deactivated users cannot login
+- Returns 400 Bad Request if attempting invalid status change
+
+#### VIEWER Role Enforcement
+
+**VIEWER Role - Read-Only Access:**
+
+| Endpoint | Method | USER | VIEWER | Response |
+|----------|--------|------|--------|----------|
+| /expenses | GET | ✅ | ✅ | 200 OK |
+| /expenses/{id} | GET | ✅ | ✅ | 200 OK |
+| /expenses | POST | ✅ | ❌ | 403 Forbidden |
+| /expenses/{id} | PUT | ✅ | ❌ | 403 Forbidden |
+| /expenses/{id} | DELETE | ✅ | ❌ | 403 Forbidden |
+| /analytics/* | GET | ✅ | ✅ | 200 OK |
+
+**Example: VIEWER attempts to create expense (fails)**
+```bash
+curl -X POST http://localhost:8080/api/v1/expenses \
+  -H "Authorization: Bearer <viewer_jwt_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "amount": 25.50,
+    "category": "FOOD",
+    "description": "Lunch",
+    "expenseDate": "2025-12-28"
+  }'
+
+# Response: 403 Forbidden
+```
+
+#### Role Change Validation
+
+**Security Guarantees:**
+
+1. **Only ADMIN can manage roles** - Non-ADMIN users cannot access admin endpoints (403 Forbidden)
+2. **Prevents privilege escalation** - VIEWER/USER cannot promote themselves
+3. **ADMIN self-protection** - ADMIN cannot demote or deactivate themselves
+4. **Immediate enforcement** - Role changes take effect on next API call
+5. **No role parameters in requests** - Roles only assigned by ADMIN via dedicated endpoints
 
 1. **Registration**:
    - Default role = `USER`
@@ -687,6 +842,48 @@ Authorization: Bearer <jwt_token>
 - **ADMIN** - Full system access, can manage all users and expenses
 - **USER** - Can manage own expenses and view own profile
 - **VIEWER** - Read-only access to own data
+
+## Implementation Details
+
+### RBAC Architecture
+
+The RBAC implementation follows Spring Security best practices:
+
+1. **Role-Based Authorization**
+   - `@EnableMethodSecurity(prePostEnabled = true)` enables method-level security
+   - `@PreAuthorize` decorators enforce role requirements at controller methods
+   - Authorization logic is separate from business logic (controllers, not repositories)
+
+2. **JWT Role Transport**
+   - JWT tokens include role claim: `"role": "USER"`
+   - Role extracted by `JwtAuthenticationFilter` and converted to Spring Security `GrantedAuthority`
+   - Prefix `ROLE_` automatically added: `"ROLE_USER"`, `"ROLE_VIEWER"`, `"ROLE_ADMIN"`
+
+3. **Admin Bootstrap**
+   - `AdminBootstrap` component runs on startup via `CommandLineRunner`
+   - Creates default ADMIN user only if no ADMIN users exist
+   - Idempotent and thread-safe
+   - Credentials logged to console with security warning
+
+4. **Role Change Security**
+   - `RoleChangeRequestDto` for role change requests
+   - `StatusChangeRequestDto` for activation/deactivation
+   - Validation prevents ADMIN self-demotion and self-deactivation
+   - Changes take effect immediately on next request
+
+5. **Ownership + Authorization**
+   - Two separate security layers:
+     1. **Role Authorization**: `@PreAuthorize("hasRole('USER')"`
+     2. **Ownership Verification**: Service layer checks expense ownership
+   - Both must pass; failure on either returns 403 Forbidden
+
+### Code Quality Standards
+
+- **No role strings duplication**: Single source of truth via `Role` enum
+- **No hardcoded role names**: Use `@PreAuthorize("hasRole('USER')")` (Spring converts to uppercase)
+- **No security in repositories**: Authorization logic in controllers only
+- **No role parameters from clients**: Roles server-assigned only
+- **Centralized exception handling**: `GlobalExceptionHandler` handles all 403 responses
 
 ## Status
 

@@ -62,6 +62,26 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Handle AccessDeniedException.
+     */
+    @ExceptionHandler(org.springframework.security.access.AccessDeniedException.class)
+    public ResponseEntity<ErrorResponse> handleAccessDeniedException(
+              org.springframework.security.access.AccessDeniedException ex,
+              WebRequest request) {
+           log.warn("Access denied: {}", ex.getMessage());
+
+           ErrorResponse errorResponse = ErrorResponse.builder()
+              .error("Forbidden")
+              .message("You do not have permission to access this resource")
+              .status(HttpStatus.FORBIDDEN.value())
+              .timestamp(LocalDateTime.now())
+              .path(request.getDescription(false).replace("uri=", ""))
+              .build();
+
+           return new ResponseEntity<>(errorResponse, HttpStatus.FORBIDDEN);
+    }
+
+    /**
      * Handle MethodArgumentNotValidException (validation errors from @Valid).
      */
     @ExceptionHandler(MethodArgumentNotValidException.class)

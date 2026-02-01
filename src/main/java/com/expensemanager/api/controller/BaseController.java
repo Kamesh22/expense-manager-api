@@ -4,6 +4,7 @@ import com.expensemanager.infrastructure.security.JwtAuthDetails;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -50,6 +51,18 @@ public abstract class BaseController {
             log.warn("Error extracting user ID from authentication: {}", e.getMessage());
             throw new IllegalArgumentException("Invalid authentication token", e);
         }
+    }
+
+    /**
+     * Extract authenticated user ID from SecurityContext.
+     * This is a convenience method for use in controllers where Authentication is available in SecurityContext.
+     *
+     * @return the authenticated user's ID
+     * @throws IllegalArgumentException if authentication is invalid or userId is missing
+     */
+    protected Long getAuthenticatedUserId() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        return getAuthenticatedUserId(authentication);
     }
 
 }
