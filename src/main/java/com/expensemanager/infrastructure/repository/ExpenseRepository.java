@@ -50,11 +50,12 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
 
     /**
      * Get category totals using JPQL aggregation (SUM + GROUP BY).
+     * Automatically excludes deleted expenses via @Where annotation.
      *
      * @param userId the user ID
      * @return list of Object[] with [category name, total]
      */
-    @Query("SELECT CAST(e.category AS string), SUM(e.amount) FROM Expense e WHERE e.user.id = :userId GROUP BY e.category")
+    @Query("SELECT CAST(e.category AS string), SUM(e.amount) FROM Expense e WHERE e.user.id = :userId AND e.isDeleted = false GROUP BY e.category")
     List<Object[]> getCategoryTotals(@Param("userId") Long userId);
 
 }

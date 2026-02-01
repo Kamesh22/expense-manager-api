@@ -19,6 +19,8 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
+
 import java.time.LocalDate;
 import java.util.List;
 
@@ -183,8 +185,13 @@ public class ExpenseServiceImpl implements ExpenseService {
         // OWNERSHIP CHECK: Verify expense belongs to authenticated user
         verifyExpenseOwnership(expense, userId);
 
-        expenseRepository.delete(expense);
-        log.info("Expense deleted successfully with ID: {} for user: {}", expenseId, userId);
+        // SOFT DELETE: Mark as deleted instead of physically removing the record
+        expense.setIsDeleted(true);
+        expense.setDeletedAt(LocalDateTime.now());
+        expense.setUpdatedAt(LocalDateTime.now());
+        expenseRepository.save(expense);
+        log.info("Expense soft-deleted successfully with ID: {} for user: {} at {}", 
+            expenseId, userId, LocalDateTime.now());
     }
 
     /**

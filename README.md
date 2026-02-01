@@ -128,7 +128,15 @@ description (String) - Max 500 chars
 expense_date (LocalDate)
 created_at (LocalDateTime) - Auto-set on creation
 updated_at (LocalDateTime) - Auto-updated on modification
+is_deleted (Boolean) - Soft delete flag, default false
+deleted_at (LocalDateTime) - Timestamp when soft-deleted (null if not deleted)
 ```
+
+**Important:** Soft Delete Implementation
+- Deleting an expense sets `is_deleted = true` and `deleted_at = timestamp`
+- Physical deletion never occurs - all historical data is retained
+- All queries automatically exclude deleted records via `@Where(clause = "is_deleted = false")`
+- Deleted expenses are invisible to API consumers
 
 ## API Endpoints
 
@@ -233,6 +241,56 @@ http://localhost:8080/api/v1/swagger-ui.html
 
 ## Security
 
+### Ownership Enforcement
+
+**CRITICAL SECURITY FEATURE**: Strict expense ownership enforcement is implemented at the service layer.
+
+#### How It Works:
+1. **User ID Extraction**: User ID is extracted from JWT token in `BaseController.getAuthenticatedUserId()`
+2. **No Request Parameters**: User ID is **NEVER** accepted from request parameters (removed from all endpoints)
+3. **Service Layer Verification**: All service methods verify ownership via `verifyExpenseOwnership(expense, userId)`
+4. **Unauthorized Access Response**: HTTP 403 Forbidden with `AccessDeniedException`
+
+#### Example: Getting an Expense
+```java
+@GetMapping("/{expenseId}")
+public ResponseEntity<ExpenseResponseDto> getExpenseById(
+    @PathVariable Long expenseId,
+    Authentication authentication) {
+    // Step 1: Extract userId from JWT token (NOT from request parameter)
+    Long userId = getAuthenticatedUserId(authentication);
+    
+    // Step 2: Pass both expenseId and userId to service
+    ExpenseResponseDto expense = expenseService.getExpenseById(expenseId, userId);
+    
+    // Step 3: If expense doesn't belong to user, service throws AccessDeniedException → 403
+    return ResponseEntity.ok(expense);
+}
+```
+
+#### Service Layer Security Check:
+```java
+private void verifyExpenseOwnership(Expense expense, Long userId) {
+    if (!expense.getUser().getId().equals(userId)) {
+        log.warn("SECURITY: User {} attempted to access expense {} which belongs to user {}",
+            userId, expense.getId(), expense.getUser().getId());
+        throw new AccessDeniedException("You do not have permission to access this expense");
+    }
+}
+```
+
+**Security Guarantee**: A user can ONLY access, modify, or delete their own expenses. Attempting to access another user's expense always returns HTTP 403 Forbidden.
+
+### Soft Delete & Data Retention
+
+All expense deletions are **soft deletes**:
+- Records are marked as deleted but never physically removed
+- Deleted expenses are automatically excluded from all queries
+- Full audit trail is maintained for compliance
+- Analytics automatically exclude deleted records
+
+### Other Security Features
+
 - **JWT Authentication**: All endpoints (except auth) require a valid JWT token in the `Authorization: Bearer <token>` header
 - **Password Encryption**: Passwords are encrypted using BCrypt
 - **Input Validation**: All request DTOs are validated using Jakarta Validation annotations
@@ -275,9 +333,12 @@ POST /api/v1/auth/register
 ```
 
 ### Create Expense
+
 **Request:**
 ```json
-POST /api/v1/expenses?userId=1
+POST /api/v1/expenses
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+
 {
   "amount": 25.50,
   "category": "FOOD",
@@ -290,7 +351,6 @@ POST /api/v1/expenses?userId=1
 ```json
 {
   "id": 1,
-  "userId": 1,
   "amount": 25.50,
   "category": "FOOD",
   "description": "Lunch at restaurant",
@@ -299,6 +359,135 @@ POST /api/v1/expenses?userId=1
   "updatedAt": "2025-12-28T10:30:45"
 }
 ```
+
+**Note**: User ID is automatically extracted from JWT token. No `userId` parameter needed.
+
+### Get Expense (With Ownership Verification)
+
+**Request:**
+```
+GET /api/v1/expenses/1
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+**Response (200 OK) - If owner:**
+```json
+{
+  "id": 1,
+  "amount": 25.50,
+  "category": "FOOD",
+  "description": "Lunch at restaurant",
+  "expenseDate": "2025-12-28",
+  "createdAt": "2025-12-28T10:30:45",
+  "updatedAt": "2025-12-28T10:30:45"
+}
+```
+
+**Response (403 Forbidden) - If not owner:**
+```json
+{
+  "timestamp": "2025-12-28T10:35:20.123Z",
+  "status": 403,
+  "error": "Forbidden",
+  "message": "You do not have permission to access this expense"
+}
+```
+
+### Update Expense (With Ownership Verification)
+
+**Request:**
+```json
+PUT /api/v1/expenses/1
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+
+{
+  "amount": 30.00,
+  "category": "FOOD",
+  "description": "Updated lunch expense",
+  "expenseDate": "2025-12-28"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "id": 1,
+  "amount": 30.00,
+  "category": "FOOD",
+  "description": "Updated lunch expense",
+  "expenseDate": "2025-12-28",
+  "createdAt": "2025-12-28T10:30:45",
+  "updatedAt": "2025-12-28T10:35:20"
+}
+```
+
+### Delete Expense (Soft Delete with Ownership Verification)
+
+**Request:**
+```
+DELETE /api/v1/expenses/1
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+**Response (204 No Content)** - Expense marked as deleted (not physically removed)
+
+**After Deletion:**
+- Record in database has `is_deleted = true` and `deleted_at = timestamp`
+- GET requests for this expense return HTTP 403 or 404 (invisible to user)
+- Analytics automatically exclude from calculations
+- Full audit trail maintained for compliance
+
+### List User Expenses
+
+**Request:**
+```
+GET /api/v1/expenses?page=0&size=10&sort=expenseDate,desc
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+**Response (200 OK):**
+```json
+{
+  "content": [
+    {
+      "id": 1,
+      "amount": 25.50,
+      "category": "FOOD",
+      "description": "Lunch at restaurant",
+      "expenseDate": "2025-12-28",
+      "createdAt": "2025-12-28T10:30:45",
+      "updatedAt": "2025-12-28T10:30:45"
+    }
+  ],
+  "pageable": {
+    "sort": {
+      "empty": false,
+      "unsorted": false,
+      "sorted": true
+    },
+    "offset": 0,
+    "pageNumber": 0,
+    "pageSize": 10,
+    "paged": true,
+    "unpaged": false
+  },
+  "last": true,
+  "totalPages": 1,
+  "totalElements": 1,
+  "first": true,
+  "size": 10,
+  "number": 0,
+  "sort": {
+    "empty": false,
+    "unsorted": false,
+    "sorted": true
+  },
+  "numberOfElements": 1,
+  "empty": false
+}
+```
+
+**Note**: Results automatically scoped to authenticated user only.
 
 ### Get Category Summary
 **Request:**
