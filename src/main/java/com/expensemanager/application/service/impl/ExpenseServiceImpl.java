@@ -15,6 +15,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,7 +23,10 @@ import java.time.LocalDate;
 import java.util.List;
 
 /**
- * Implementation of ExpenseService.
+ * Implementation of ExpenseService with strict ownership enforcement.
+ * 
+ * CRITICAL: All operations verify that the expense belongs to the authenticated user.
+ * Any attempt to access another user's expense results in AccessDeniedException (HTTP 403).
  */
 @Service
 @RequiredArgsConstructor
@@ -36,13 +40,17 @@ public class ExpenseServiceImpl implements ExpenseService {
 
     @Override
     public ExpenseResponseDto createExpense(Long userId, ExpenseRequestDto expenseRequestDto) {
-        log.info("Creating new expense for user: {}", userId);
+        log.info("Creating new expense for authenticated user: {}", userId);
 
         User user = userRepository.findById(userId)
-            .orElseThrow(() -> new ResourceNotFoundException("User not found with ID: " + userId));
+            .orElseThrow(() -> {
+                log.error("User not found with ID: {}", userId);
+                return new ResourceNotFoundException("User not found with ID: " + userId);
+            });
 
         // Validate expense date is not in the future
         if (expenseRequestDto.getExpenseDate().isAfter(LocalDate.now())) {
+            log.warn("Expense date is in the future: {}", expenseRequestDto.getExpenseDate());
             throw new ValidationException("Expense date cannot be in the future");
         }
 
@@ -55,28 +63,40 @@ public class ExpenseServiceImpl implements ExpenseService {
             .build();
 
         Expense savedExpense = expenseRepository.save(expense);
-        log.info("Expense created successfully with ID: {}", savedExpense.getId());
+        log.info("Expense created successfully with ID: {} for user: {}", savedExpense.getId(), userId);
 
         return entityMapper.toExpenseResponseDto(savedExpense);
     }
 
     @Override
     @Transactional(readOnly = true)
-    public ExpenseResponseDto getExpenseById(Long id) {
-        log.debug("Fetching expense with ID: {}", id);
-        Expense expense = expenseRepository.findById(id)
-            .orElseThrow(() -> new ResourceNotFoundException("Expense not found with ID: " + id));
+    public ExpenseResponseDto getExpenseById(Long expenseId, Long userId) {
+        log.debug("Fetching expense with ID: {} for user: {}", expenseId, userId);
+
+        Expense expense = expenseRepository.findById(expenseId)
+            .orElseThrow(() -> {
+                log.error("Expense not found with ID: {}", expenseId);
+                return new ResourceNotFoundException("Expense not found with ID: " + expenseId);
+            });
+
+        // OWNERSHIP CHECK: Verify expense belongs to authenticated user
+        verifyExpenseOwnership(expense, userId);
+
         return entityMapper.toExpenseResponseDto(expense);
     }
 
     @Override
     @Transactional(readOnly = true)
     public Page<ExpenseResponseDto> getExpensesByUserId(Long userId, Pageable pageable) {
-        log.debug("Fetching expenses for user: {} with pagination: {}", userId, pageable);
+        log.debug("Fetching expenses for authenticated user: {} with pagination: {}", userId, pageable);
 
         User user = userRepository.findById(userId)
-            .orElseThrow(() -> new ResourceNotFoundException("User not found with ID: " + userId));
+            .orElseThrow(() -> {
+                log.error("User not found with ID: {}", userId);
+                return new ResourceNotFoundException("User not found with ID: " + userId);
+            });
 
+        // Query automatically scoped to user - no additional ownership check needed
         return expenseRepository.findByUser(user, pageable)
             .map(entityMapper::toExpenseResponseDto);
     }
@@ -87,8 +107,12 @@ public class ExpenseServiceImpl implements ExpenseService {
         log.debug("Fetching expenses for user: {} with category: {} and pagination: {}", userId, category, pageable);
 
         User user = userRepository.findById(userId)
-            .orElseThrow(() -> new ResourceNotFoundException("User not found with ID: " + userId));
+            .orElseThrow(() -> {
+                log.error("User not found with ID: {}", userId);
+                return new ResourceNotFoundException("User not found with ID: " + userId);
+            });
 
+        // Query automatically scoped to user - no additional ownership check needed
         return expenseRepository.findByUserAndCategory(user, category, pageable)
             .map(entityMapper::toExpenseResponseDto);
     }
@@ -99,12 +123,17 @@ public class ExpenseServiceImpl implements ExpenseService {
         log.debug("Fetching expenses for user: {} between dates: {} and {}", userId, startDate, endDate);
 
         User user = userRepository.findById(userId)
-            .orElseThrow(() -> new ResourceNotFoundException("User not found with ID: " + userId));
+            .orElseThrow(() -> {
+                log.error("User not found with ID: {}", userId);
+                return new ResourceNotFoundException("User not found with ID: " + userId);
+            });
 
         if (startDate.isAfter(endDate)) {
+            log.warn("Start date is after end date: {} > {}", startDate, endDate);
             throw new ValidationException("Start date must be before end date");
         }
 
+        // Query automatically scoped to user - no additional ownership check needed
         return expenseRepository.findByUserAndExpenseDateBetween(user, startDate, endDate)
             .stream()
             .map(entityMapper::toExpenseResponseDto)
@@ -112,14 +141,21 @@ public class ExpenseServiceImpl implements ExpenseService {
     }
 
     @Override
-    public ExpenseResponseDto updateExpense(Long id, ExpenseRequestDto expenseRequestDto) {
-        log.info("Updating expense with ID: {}", id);
+    public ExpenseResponseDto updateExpense(Long expenseId, Long userId, ExpenseRequestDto expenseRequestDto) {
+        log.info("Updating expense with ID: {} for user: {}", expenseId, userId);
 
-        Expense expense = expenseRepository.findById(id)
-            .orElseThrow(() -> new ResourceNotFoundException("Expense not found with ID: " + id));
+        Expense expense = expenseRepository.findById(expenseId)
+            .orElseThrow(() -> {
+                log.error("Expense not found with ID: {}", expenseId);
+                return new ResourceNotFoundException("Expense not found with ID: " + expenseId);
+            });
+
+        // OWNERSHIP CHECK: Verify expense belongs to authenticated user
+        verifyExpenseOwnership(expense, userId);
 
         // Validate expense date is not in the future
         if (expenseRequestDto.getExpenseDate().isAfter(LocalDate.now())) {
+            log.warn("Update attempt with future date: {}", expenseRequestDto.getExpenseDate());
             throw new ValidationException("Expense date cannot be in the future");
         }
 
@@ -129,26 +165,44 @@ public class ExpenseServiceImpl implements ExpenseService {
         expense.setExpenseDate(expenseRequestDto.getExpenseDate());
 
         Expense updatedExpense = expenseRepository.save(expense);
-        log.info("Expense updated successfully with ID: {}", updatedExpense.getId());
+        log.info("Expense updated successfully with ID: {} for user: {}", updatedExpense.getId(), userId);
 
         return entityMapper.toExpenseResponseDto(updatedExpense);
     }
 
     @Override
-    public void deleteExpense(Long id) {
-        log.info("Deleting expense with ID: {}", id);
+    public void deleteExpense(Long expenseId, Long userId) {
+        log.info("Deleting expense with ID: {} for user: {}", expenseId, userId);
 
-        Expense expense = expenseRepository.findById(id)
-            .orElseThrow(() -> new ResourceNotFoundException("Expense not found with ID: " + id));
+        Expense expense = expenseRepository.findById(expenseId)
+            .orElseThrow(() -> {
+                log.error("Expense not found with ID: {}", expenseId);
+                return new ResourceNotFoundException("Expense not found with ID: " + expenseId);
+            });
+
+        // OWNERSHIP CHECK: Verify expense belongs to authenticated user
+        verifyExpenseOwnership(expense, userId);
 
         expenseRepository.delete(expense);
-        log.info("Expense deleted successfully with ID: {}", id);
+        log.info("Expense deleted successfully with ID: {} for user: {}", expenseId, userId);
     }
 
-    @Override
-    @Transactional(readOnly = true)
-    public boolean expenseExists(Long id) {
-        return expenseRepository.existsById(id);
+    /**
+     * Verify that an expense belongs to the authenticated user.
+     * 
+     * CRITICAL SECURITY CHECK: Throws AccessDeniedException if the expense does not belong to the user.
+     * This prevents unauthorized access to other users' expenses.
+     *
+     * @param expense the expense entity
+     * @param userId the authenticated user ID
+     * @throws AccessDeniedException if the expense does not belong to the authenticated user
+     */
+    private void verifyExpenseOwnership(Expense expense, Long userId) {
+        if (!expense.getUser().getId().equals(userId)) {
+            log.warn("SECURITY: User {} attempted to access expense {} which belongs to user {}",
+                userId, expense.getId(), expense.getUser().getId());
+            throw new AccessDeniedException("You do not have permission to access this expense");
+        }
     }
 
 }

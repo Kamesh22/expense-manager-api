@@ -89,7 +89,7 @@ public class SecurityConfig {
                 session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
             )
             .authorizeHttpRequests(authz -> authz
-                .requestMatchers(HttpMethod.POST, "/auth/register").permitAll()
+                .requestMatchers(HttpMethod.POST, "/auth/register", "/auth/login").permitAll()
                 .requestMatchers(
                     "/auth/**",
                     "/v3/api-docs/**",
