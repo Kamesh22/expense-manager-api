@@ -1,9 +1,11 @@
 package com.expensemanager.infrastructure.repository;
 
 import com.expensemanager.domain.entity.User;
+import com.expensemanager.domain.enums.Role;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -43,5 +45,13 @@ public interface UserRepository extends JpaRepository<User, Long> {
      * @return true if the email exists, false otherwise
      */
     boolean existsByEmail(String email);
+
+    /**
+     * Find users by role.
+     *
+     * @param role the role to search for
+     * @return a list of users with the specified role
+     */
+    List<User> findByRole(Role role);
 
 }

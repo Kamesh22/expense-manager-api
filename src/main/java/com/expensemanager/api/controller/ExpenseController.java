@@ -6,6 +6,7 @@ import com.expensemanager.application.service.ExpenseService;
 import com.expensemanager.domain.enums.ExpenseCategory;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
@@ -17,156 +18,235 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
 import java.util.List;
 
 /**
- * REST Controller for Expense operations.
+ * REST Controller for Expense operations with strict ownership enforcement.
+ * 
+ * SECURITY NOTES:
+ * - User ID is ALWAYS extracted from SecurityContext (JWT token)
+ * - No userId parameters are accepted from clients
+ * - Users can ONLY create, read, update, or delete their own expenses
+ * - Ownership violations result in HTTP 403 (Forbidden)
+ * 
  * Base path: /api/v1/expenses
  */
 @RestController
 @RequestMapping("/expenses")
 @RequiredArgsConstructor
 @Tag(name = "Expense Management", description = "Endpoints for managing expenses")
+@SecurityRequirement(name = "Bearer Authentication")
 @Slf4j
 public class ExpenseController extends BaseController {
 
     private final ExpenseService expenseService;
 
     /**
-     * Get all expenses for a user with pagination.
+     * Get all expenses for the authenticated user with pagination.
+     * 
+     * AUTHORIZATION: Requires USER or VIEWER role
+     * User ID is extracted from JWT token - NOT from request parameters.
      *
-     * @param userId the user ID
      * @param pageable pagination information
-     * @return paginated list of expenses
+     * @param authentication Spring Security authentication object
+     * @return paginated list of authenticated user's expenses
      */
     @GetMapping
-    @Operation(summary = "Get user expenses", description = "Retrieve all expenses for a user with pagination")
+    @PreAuthorize("hasAnyRole('USER', 'VIEWER')")
+    @Operation(
+        summary = "Get authenticated user's expenses",
+        description = "Retrieve all expenses for the authenticated user with pagination. Requires USER or VIEWER role."
+    )
     @ApiResponse(responseCode = "200", description = "Expenses retrieved successfully")
-    public ResponseEntity<Page<ExpenseResponseDto>> getAllExpenses(
-            @Parameter(description = "User ID") @RequestParam Long userId,
-            Pageable pageable) {
-        log.debug("Fetching expenses for user: {} with pagination", userId);
+    @ApiResponse(responseCode = "403", description = "Forbidden - USER or VIEWER role required")
+    public ResponseEntity<Page<ExpenseResponseDto>> getUserExpenses(
+            Pageable pageable,
+            Authentication authentication) {
+        Long userId = getAuthenticatedUserId(authentication);
+        log.info("Fetching expenses for authenticated user: {}", userId);
         Page<ExpenseResponseDto> expenses = expenseService.getExpensesByUserId(userId, pageable);
         return ResponseEntity.ok(expenses);
     }
 
     /**
-     * Get expense by ID.
+     * Get a specific expense by ID with ownership verification.
+     * 
+     * AUTHORIZATION: Requires USER or VIEWER role
+     * Returns 403 Forbidden if the expense does not belong to the authenticated user.
      *
-     * @param id the expense ID
-     * @return expense details
+     * @param expenseId the expense ID
+     * @param authentication Spring Security authentication object
+     * @return the expense details
      */
-    @GetMapping("/{id}")
-    @Operation(summary = "Get expense by ID", description = "Retrieve a specific expense")
+    @GetMapping("/{expenseId}")
+    @PreAuthorize("hasAnyRole('USER', 'VIEWER')")
+    @Operation(
+        summary = "Get expense by ID",
+        description = "Retrieve a specific expense with ownership verification. Requires USER or VIEWER role."
+    )
     @ApiResponses(value = {
         @ApiResponse(responseCode = "200", description = "Expense retrieved successfully"),
+        @ApiResponse(responseCode = "403", description = "Forbidden - USER/VIEWER role required or expense belongs to another user"),
         @ApiResponse(responseCode = "404", description = "Expense not found")
     })
     public ResponseEntity<ExpenseResponseDto> getExpenseById(
-            @Parameter(description = "Expense ID") @PathVariable Long id) {
-        log.debug("Fetching expense with ID: {}", id);
-        ExpenseResponseDto expense = expenseService.getExpenseById(id);
+            @Parameter(description = "Expense ID") @PathVariable Long expenseId,
+            Authentication authentication) {
+        Long userId = getAuthenticatedUserId(authentication);
+        log.info("Fetching expense with ID: {} for user: {}", expenseId, userId);
+        ExpenseResponseDto expense = expenseService.getExpenseById(expenseId, userId);
         return ResponseEntity.ok(expense);
     }
 
     /**
-     * Get expenses filtered by category.
+     * Get expenses filtered by category for the authenticated user.
+     * 
+     * User ID is extracted from JWT token - NOT from request parameters.
      *
-     * @param userId the user ID
      * @param category the expense category
      * @param pageable pagination information
-     * @return paginated list of expenses
+     * @param authentication Spring Security authentication object
+     * @return paginated list of expenses in the specified category
      */
     @GetMapping("/category/{category}")
-    @Operation(summary = "Get expenses by category", description = "Retrieve expenses filtered by category")
+    @PreAuthorize("hasAnyRole('USER', 'VIEWER')")
+    @Operation(
+        summary = "Get expenses by category",
+        description = "Retrieve expenses filtered by category for the authenticated user. Requires USER or VIEWER role."
+    )
     @ApiResponse(responseCode = "200", description = "Expenses retrieved successfully")
+    @ApiResponse(responseCode = "403", description = "Forbidden - USER or VIEWER role required")
     public ResponseEntity<Page<ExpenseResponseDto>> getExpensesByCategory(
-            @Parameter(description = "User ID") @RequestParam Long userId,
             @Parameter(description = "Expense Category") @PathVariable ExpenseCategory category,
-            Pageable pageable) {
-        log.debug("Fetching expenses for user: {} with category: {}", userId, category);
+            Pageable pageable,
+            Authentication authentication) {
+        Long userId = getAuthenticatedUserId(authentication);
+        log.info("Fetching {} expenses for user: {}", category, userId);
         Page<ExpenseResponseDto> expenses = expenseService.getExpensesByCategory(userId, category, pageable);
         return ResponseEntity.ok(expenses);
     }
 
     /**
-     * Get expenses within a date range.
+     * Get expenses within a date range for the authenticated user.
+     * 
+     * AUTHORIZATION: Requires USER or VIEWER role
+     * User ID is extracted from JWT token - NOT from request parameters.
      *
-     * @param userId the user ID
-     * @param startDate the start date (inclusive)
-     * @param endDate the end date (inclusive)
-     * @return list of expenses in date range
+     * @param startDate the start date (inclusive) in YYYY-MM-DD format
+     * @param endDate the end date (inclusive) in YYYY-MM-DD format
+     * @param authentication Spring Security authentication object
+     * @return list of expenses within the date range
      */
     @GetMapping("/range")
-    @Operation(summary = "Get expenses by date range", description = "Retrieve expenses within a date range")
+    @PreAuthorize("hasAnyRole('USER', 'VIEWER')")
+    @Operation(
+        summary = "Get expenses by date range",
+        description = "Retrieve expenses within a date range for the authenticated user. Requires USER or VIEWER role."
+    )
     @ApiResponse(responseCode = "200", description = "Expenses retrieved successfully")
+    @ApiResponse(responseCode = "403", description = "Forbidden - USER or VIEWER role required")
     public ResponseEntity<List<ExpenseResponseDto>> getExpensesByDateRange(
-            @Parameter(description = "User ID") @RequestParam Long userId,
             @Parameter(description = "Start Date (YYYY-MM-DD)") @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
-            @Parameter(description = "End Date (YYYY-MM-DD)") @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
-        log.debug("Fetching expenses for user: {} between {} and {}", userId, startDate, endDate);
+            @Parameter(description = "End Date (YYYY-MM-DD)") @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            Authentication authentication) {
+        Long userId = getAuthenticatedUserId(authentication);
+        log.info("Fetching expenses for user {} between {} and {}", userId, startDate, endDate);
         List<ExpenseResponseDto> expenses = expenseService.getExpensesByDateRange(userId, startDate, endDate);
         return ResponseEntity.ok(expenses);
     }
 
     /**
-     * Create a new expense.
+     * Create a new expense for the authenticated user.
+     * 
+     * AUTHORIZATION: Requires USER role
+     * User ID is ALWAYS extracted from JWT token - NOT from request parameters.
+     * This prevents users from creating expenses for other users.
      *
-     * @param userId the user ID
-     * @param expenseRequestDto expense details
-     * @return created expense
+     * @param expenseRequestDto expense details (does NOT include userId)
+     * @param authentication Spring Security authentication object
+     * @return the created expense
      */
     @PostMapping
-    @Operation(summary = "Create new expense", description = "Create a new expense record")
+    @PreAuthorize("hasRole('USER')")
+    @Operation(
+        summary = "Create new expense",
+        description = "Create a new expense for the authenticated user. Requires USER role."
+    )
     @ApiResponse(responseCode = "201", description = "Expense created successfully")
+    @ApiResponse(responseCode = "403", description = "Forbidden - USER role required")
     public ResponseEntity<ExpenseResponseDto> createExpense(
-            @Parameter(description = "User ID") @RequestParam Long userId,
-            @Valid @RequestBody ExpenseRequestDto expenseRequestDto) {
-        log.info("Creating new expense for user: {}", userId);
+            @Valid @RequestBody ExpenseRequestDto expenseRequestDto,
+            Authentication authentication) {
+        Long userId = getAuthenticatedUserId(authentication);
+        log.info("Creating new expense for authenticated user: {}", userId);
         ExpenseResponseDto expense = expenseService.createExpense(userId, expenseRequestDto);
         return ResponseEntity.status(HttpStatus.CREATED).body(expense);
     }
 
     /**
-     * Update expense information.
+     * Update an expense with ownership verification.
+     * 
+     * AUTHORIZATION: Requires USER role
+     * Returns 403 Forbidden if the expense does not belong to the authenticated user.
      *
-     * @param id the expense ID
+     * @param expenseId the expense ID
      * @param expenseRequestDto updated expense details
-     * @return updated expense
+     * @param authentication Spring Security authentication object
+     * @return the updated expense
      */
-    @PutMapping("/{id}")
-    @Operation(summary = "Update expense", description = "Update an existing expense")
+    @PutMapping("/{expenseId}")
+    @PreAuthorize("hasRole('USER')")
+    @Operation(
+        summary = "Update expense",
+        description = "Update an existing expense with ownership verification. Requires USER role."
+    )
     @ApiResponses(value = {
         @ApiResponse(responseCode = "200", description = "Expense updated successfully"),
+        @ApiResponse(responseCode = "403", description = "Forbidden - USER role required or expense belongs to another user"),
         @ApiResponse(responseCode = "404", description = "Expense not found")
     })
     public ResponseEntity<ExpenseResponseDto> updateExpense(
-            @Parameter(description = "Expense ID") @PathVariable Long id,
-            @Valid @RequestBody ExpenseRequestDto expenseRequestDto) {
-        log.info("Updating expense with ID: {}", id);
-        ExpenseResponseDto expense = expenseService.updateExpense(id, expenseRequestDto);
+            @Parameter(description = "Expense ID") @PathVariable Long expenseId,
+            @Valid @RequestBody ExpenseRequestDto expenseRequestDto,
+            Authentication authentication) {
+        Long userId = getAuthenticatedUserId(authentication);
+        log.info("Updating expense with ID: {} for user: {}", expenseId, userId);
+        ExpenseResponseDto expense = expenseService.updateExpense(expenseId, userId, expenseRequestDto);
         return ResponseEntity.ok(expense);
     }
 
     /**
-     * Delete expense by ID.
+     * Delete an expense with ownership verification.
+     * 
+     * AUTHORIZATION: Requires USER role
+     * Returns 403 Forbidden if the expense does not belong to the authenticated user.
      *
-     * @param id the expense ID
+     * @param expenseId the expense ID
+     * @param authentication Spring Security authentication object
      * @return no content
      */
-    @DeleteMapping("/{id}")
-    @Operation(summary = "Delete expense", description = "Delete an expense record")
+    @DeleteMapping("/{expenseId}")
+    @PreAuthorize("hasRole('USER')")
+    @Operation(
+        summary = "Delete expense",
+        description = "Delete an expense with ownership verification. Requires USER role."
+    )
     @ApiResponses(value = {
         @ApiResponse(responseCode = "204", description = "Expense deleted successfully"),
+        @ApiResponse(responseCode = "403", description = "Forbidden - USER role required or expense belongs to another user"),
         @ApiResponse(responseCode = "404", description = "Expense not found")
     })
     public ResponseEntity<Void> deleteExpense(
-            @Parameter(description = "Expense ID") @PathVariable Long id) {
-        log.info("Deleting expense with ID: {}", id);
-        expenseService.deleteExpense(id);
+            @Parameter(description = "Expense ID") @PathVariable Long expenseId,
+            Authentication authentication) {
+        Long userId = getAuthenticatedUserId(authentication);
+        log.info("Deleting expense with ID: {} for user: {}", expenseId, userId);
+        expenseService.deleteExpense(expenseId, userId);
         return ResponseEntity.noContent().build();
     }
 

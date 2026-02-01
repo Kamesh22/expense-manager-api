@@ -3,6 +3,7 @@ package com.expensemanager.domain.entity;
 import com.expensemanager.domain.enums.ExpenseCategory;
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.Where;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -10,13 +11,16 @@ import java.time.LocalDateTime;
 
 /**
  * Expense entity representing user expenses.
+ * Supports soft deletes - deleted records are marked as deleted but never physically removed.
  */
 @Entity
 @Table(name = "expenses", indexes = {
     @Index(name = "idx_user_id", columnList = "user_id"),
     @Index(name = "idx_expense_date", columnList = "expense_date"),
-    @Index(name = "idx_category", columnList = "category")
+    @Index(name = "idx_category", columnList = "category"),
+    @Index(name = "idx_deleted", columnList = "is_deleted")
 })
+@Where(clause = "is_deleted = false")
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -52,9 +56,24 @@ public class Expense {
     @Builder.Default
     private LocalDateTime updatedAt = LocalDateTime.now();
 
+    @Column(name = "is_deleted", nullable = false)
+    @Builder.Default
+    private Boolean isDeleted = false;
+
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
+
     @PreUpdate
     protected void onUpdate() {
         updatedAt = LocalDateTime.now();
+    }
+
+    @PreRemove
+    protected void onDelete() {
+        // Soft delete: mark as deleted instead of physically removing
+        this.isDeleted = true;
+        this.deletedAt = LocalDateTime.now();
+        this.updatedAt = LocalDateTime.now();
     }
 
 }
