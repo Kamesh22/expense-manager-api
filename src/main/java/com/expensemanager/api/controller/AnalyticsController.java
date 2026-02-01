@@ -11,6 +11,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -47,13 +48,15 @@ public class AnalyticsController extends BaseController {
      * @return category summary with totals
      */
     @GetMapping("/category-summary")
+    @PreAuthorize("hasAnyRole('USER', 'VIEWER')")
     @Operation(
         summary = "Get category summary",
-        description = "Retrieve expense totals grouped by category for the authenticated user"
+        description = "Retrieve expense totals grouped by category for the authenticated user. Requires USER or VIEWER role."
     )
     @ApiResponses(value = {
         @ApiResponse(responseCode = "200", description = "Category summary retrieved successfully"),
-        @ApiResponse(responseCode = "401", description = "Unauthorized - invalid or missing JWT token")
+        @ApiResponse(responseCode = "401", description = "Unauthorized - invalid or missing JWT token"),
+        @ApiResponse(responseCode = "403", description = "Forbidden - USER or VIEWER role required")
     })
     public ResponseEntity<CategorySummaryDto> getCategorySummary(Authentication authentication) {
         Long userId = getAuthenticatedUserId(authentication);
@@ -66,6 +69,7 @@ public class AnalyticsController extends BaseController {
     /**
      * Get monthly expense summary for the authenticated user.
      * 
+     * AUTHORIZATION: Requires USER or VIEWER role
      * Returns expense totals grouped by month (YYYY-MM format).
      * Supports optional date range filtering.
      *
@@ -75,14 +79,16 @@ public class AnalyticsController extends BaseController {
      * @return map of YYYY-MM to BigDecimal amounts
      */
     @GetMapping("/monthly-summary")
+    @PreAuthorize("hasAnyRole('USER', 'VIEWER')")
     @Operation(
         summary = "Get monthly expense summary",
-        description = "Retrieve expense totals grouped by month for the authenticated user. Optionally filter by date range."
+        description = "Retrieve expense totals grouped by month for the authenticated user. Optionally filter by date range. Requires USER or VIEWER role."
     )
     @ApiResponses(value = {
         @ApiResponse(responseCode = "200", description = "Monthly summary retrieved successfully"),
         @ApiResponse(responseCode = "400", description = "Invalid date range - start date after end date"),
-        @ApiResponse(responseCode = "401", description = "Unauthorized - invalid or missing JWT token")
+        @ApiResponse(responseCode = "401", description = "Unauthorized - invalid or missing JWT token"),
+        @ApiResponse(responseCode = "403", description = "Forbidden - USER or VIEWER role required")
     })
     public ResponseEntity<Map<String, BigDecimal>> getMonthlySummary(
             Authentication authentication,

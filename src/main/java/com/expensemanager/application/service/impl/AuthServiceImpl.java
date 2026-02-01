@@ -57,10 +57,10 @@ public class AuthServiceImpl implements AuthService {
             .build();
 
         User savedUser = userRepository.save(user);
-        log.info("User registered successfully with ID: {}", savedUser.getId());
+        log.info("User registered successfully with ID: {} and role: {}", savedUser.getId(), savedUser.getRole());
 
-        // Generate JWT token
-        String token = jwtTokenProvider.generateToken(savedUser.getId(), savedUser.getUsername());
+        // Generate JWT token with role
+        String token = jwtTokenProvider.generateToken(savedUser.getId(), savedUser.getUsername(), savedUser.getRole().name());
 
         return AuthResponseDto.builder()
             .userId(savedUser.getId())
@@ -92,10 +92,10 @@ public class AuthServiceImpl implements AuthService {
             throw new ValidationException("User account is inactive");
         }
 
-        log.info("User logged in successfully: {}", user.getId());
+        log.info("User logged in successfully: {} with role: {}", user.getId(), user.getRole());
 
-        // Generate JWT token
-        String token = jwtTokenProvider.generateToken(user.getId(), user.getUsername());
+        // Generate JWT token with role
+        String token = jwtTokenProvider.generateToken(user.getId(), user.getUsername(), user.getRole().name());
 
         return AuthResponseDto.builder()
             .userId(user.getId())

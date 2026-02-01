@@ -7,12 +7,13 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.util.ArrayList;
+import java.util.Collection;
 
 /**
  * JWT Authentication Filter for validating JWT tokens in requests.
@@ -23,6 +24,7 @@ import java.util.ArrayList;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtTokenProvider jwtTokenProvider;
+    private final JwtAuthorityUtil jwtAuthorityUtil;
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
@@ -44,13 +46,17 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             if (token != null && jwtTokenProvider.validateToken(token)) {
                 String username = jwtTokenProvider.getUsernameFromToken(token);
                 Long userId = jwtTokenProvider.getUserIdFromToken(token);
+                String role = jwtTokenProvider.getRoleFromToken(token);
+                
+                // Convert role to Spring Security authorities
+                Collection<GrantedAuthority> authorities = jwtAuthorityUtil.convertToAuthoritiesByString(role);
                 
                 UsernamePasswordAuthenticationToken authentication = 
-                    new UsernamePasswordAuthenticationToken(username, userId, new ArrayList<>());
+                    new UsernamePasswordAuthenticationToken(username, userId, authorities);
                 authentication.setDetails(new JwtAuthDetails(userId, username));
                 
                 SecurityContextHolder.getContext().setAuthentication(authentication);
-                log.debug("JWT token validated for user: {}", username);
+                log.debug("JWT token validated for user: {} with role: {}", username, role);
             }
         } catch (Exception ex) {
             log.error("JWT authentication error: {}", ex.getMessage());

@@ -283,6 +283,107 @@ private void verifyExpenseOwnership(Expense expense, Long userId) {
 
 **Security Guarantee**: A user can ONLY access, modify, or delete their own expenses. Attempting to access another user's expense always returns HTTP 403 Forbidden.
 
+### Role-Based Access Control (RBAC)
+
+All endpoints are now protected with role-based authorization using Spring Security method-level security.
+
+#### JWT Token Structure:
+```json
+{
+  "sub": "username",
+  "userId": 123,
+  "role": "USER",
+  "iat": 1704067200,
+  "exp": 1704153600
+}
+```
+
+#### Role Definitions:
+
+**USER** - Can manage their own expenses
+- ✅ Create expenses
+- ✅ Read own expenses
+- ✅ Update own expenses
+- ✅ Delete own expenses (soft delete)
+- ✅ View analytics (own expenses only)
+- ❌ Create/update/delete other users' expenses
+- ❌ Access admin endpoints
+
+**VIEWER** - Read-only access to own data
+- ✅ View own expenses
+- ✅ View analytics (read-only, own expenses only)
+- ❌ Create, update, or delete expenses
+- ❌ Access admin endpoints
+
+**ADMIN** - System administration
+- ✅ Manage users (list, activate/deactivate, delete)
+- ✅ View system-wide analytics (optional)
+- ✅ All USER permissions
+- ❌ User account creation limited to registration endpoints
+
+#### Authentication Flow:
+
+1. **Registration**:
+   - Default role = `USER`
+   - No role escalation via request
+   - Returns JWT with role claim
+   - Auto-login behavior
+
+2. **Login**:
+   - Available WITHOUT JWT (public endpoint)
+   - Issues new JWT regardless of token expiry
+   - Role from database (server-side only)
+
+#### Endpoint Authorization Examples:
+
+**Expense Creation** (USER role only):
+```java
+@PostMapping
+@PreAuthorize("hasRole('USER')")
+public ResponseEntity<ExpenseResponseDto> createExpense(...) { }
+```
+
+**Expense Reading** (USER or VIEWER):
+```java
+@GetMapping("/{expenseId}")
+@PreAuthorize("hasAnyRole('USER', 'VIEWER')")
+public ResponseEntity<ExpenseResponseDto> getExpenseById(...) { }
+```
+
+**Analytics Access** (USER or VIEWER):
+```java
+@GetMapping("/category-summary")
+@PreAuthorize("hasAnyRole('USER', 'VIEWER')")
+public ResponseEntity<CategorySummaryDto> getCategorySummary(...) { }
+```
+
+#### Testing Role Authorization:
+
+```bash
+# Retrieve token (USER role)
+curl -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"john_doe","password":"securePassword123"}'
+
+# Response includes JWT with role claim
+{
+  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "role": "USER",
+  "expiresIn": 86400000
+}
+
+# Access USER-protected endpoint with JWT
+curl -X POST http://localhost:8080/api/v1/expenses \
+  -H "Authorization: Bearer <jwt_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"amount":25.50,"category":"FOOD","description":"Lunch"}'
+
+# Response: 201 Created (USER role allows creation)
+
+# Create VIEWER token, attempt expense creation (fails)
+# Response: 403 Forbidden - role authorization violation
+```
+
 ### Soft Delete & Data Retention
 
 All expense deletions are **soft deletes**:
